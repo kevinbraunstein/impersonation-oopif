@@ -104,7 +104,13 @@
      since un-wrapping requires the width back (not just more height), the reported
      height only ever ratchets up from there. */
   html { overflow: hidden; }
-  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 12px; color: #111; font-size: 13px; }
+  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; color: #111; font-size: 13px; }
+  /* overflow:hidden here establishes a new block-formatting context, which forces
+     this element to contain ALL descendant margins (including the last child's
+     trailing bottom margin, which document.body.scrollHeight was silently
+     dropping via margin collapsing). Padding replaces the old body margin -
+     padding counts toward scrollHeight, margin never does. */
+  #fg-page-content { padding: 12px; overflow: hidden; }
   .fg-meta { color: #555; margin-bottom: 8px; }
   .fg-note { color: #555; font-size: 11px; font-style: italic; }
   table.fg-probe-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
@@ -122,6 +128,8 @@
 </style>
 </head>
 <body>
+
+<div id="fg-page-content">
 
 <p class="fg-meta">
   Frame: <strong>out-of-process iframe (cross-site)</strong> &middot;
@@ -145,6 +153,8 @@
   override that patches the getters but not toJSON() leaks a different value
   to anything calling .toJSON() or JSON.stringify(navigator.userAgentData).
 </p>
+
+</div>
 
 <script>
   document.getElementById('fg-origin').textContent = location.origin;
@@ -344,20 +354,19 @@
   // Reports only this frame's rendered height to the parent - NOT the probe
   // data above, which stays local to this frame's own table.
   //
-  // Deliberately measures document.body.scrollHeight, NOT
-  // document.documentElement.scrollHeight. The root <html> element's
-  // scrollHeight is clamped to at least the current viewport height, so when
-  // content is shorter than the iframe's current size it reports back the
-  // iframe's OWN height instead of the content's true height - feeding a
-  // resize message built from that straight back into a taller iframe height,
-  // which the next cycle reads back as an even taller "content" height, and
-  // so on forever. document.body is an ordinary block element and isn't
-  // clamped to the viewport, so it reflects actual content height regardless
-  // of the iframe's current size, which breaks that loop. The +2px is just a
-  // one-time buffer against sub-pixel rounding causing a 1px scrollbar.
+  // Measures #fg-page-content's scrollHeight, not document.documentElement's
+  // (clamped to at least the current viewport height - would feed a resize
+  // message straight back into a taller "content" height forever) and not
+  // document.body's either (its scrollHeight can silently drop the last
+  // child's own trailing margin via margin collapsing). The wrapper's
+  // overflow:hidden establishes a block-formatting context that contains
+  // every descendant's margin, so its scrollHeight is a true, tight measure
+  // of everything that needs to be visible. The +2px is a one-time buffer
+  // against sub-pixel rounding causing a 1px scrollbar.
+  var pageContentEl = document.getElementById('fg-page-content');
   function fgReportHeightToParent() {
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ source: 'fg-probe-resize', height: document.body.scrollHeight + 2 }, '*');
+      window.parent.postMessage({ source: 'fg-probe-resize', height: pageContentEl.scrollHeight + 2 }, '*');
     }
   }
 
