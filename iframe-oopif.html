@@ -96,6 +96,14 @@
 </script>
 
 <style>
+  /* Suppresses this document's OWN scrollbar. Neither the parent's overflow:hidden
+     on the <iframe> box nor the legacy scrolling="no" attribute control this - both
+     only affect how the outer box clips relative to the parent page, not whether
+     this document scrolls internally. Without this, a transient scrollbar can eat
+     ~15px of width, wrap a long JSON line in a <pre> block onto an extra line, and
+     since un-wrapping requires the width back (not just more height), the reported
+     height only ever ratchets up from there. */
+  html { overflow: hidden; }
   body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 12px; color: #111; font-size: 13px; }
   .fg-meta { color: #555; margin-bottom: 8px; }
   .fg-note { color: #555; font-size: 11px; font-style: italic; }
