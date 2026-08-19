@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Renderer Policy / Navigator Probe — OOPIF</title>
+
+<!--
+  ============================================================================
+  Cross-site child frame for renderer-policy-probe.html.
+
+  HOSTING REQUIREMENT: this file must be served from a genuinely different
+  SITE than the main page (a different registrable domain, e.g.
+  "frame-a.test" vs "frame-b.test") — not merely a different port on the
+  same host. Under Chromium/CEF's Site Isolation, "site" is scheme +
+  registrable domain, ignoring port, so same-host-different-port usually
+  stays in the SAME renderer process and is not actually out-of-process.
+
+  A simple way to get two real sites locally:
+    1. Add two hostnames to /etc/hosts pointing at 127.0.0.1, e.g.:
+         127.0.0.1  frame-a.test
+         127.0.0.1  frame-b.test
+    2. Serve renderer-policy-probe.html + iframe-local.html from one
+       (e.g. `python3 -m http.server 8000` on frame-a.test), and this file
+       from the other (e.g. `python3 -m http.server 8001` on frame-b.test).
+    3. Open http://frame-a.test:8000/renderer-policy-probe.html?oopif=http://frame-b.test:8001/iframe-oopif.html
+
+  Make sure whatever you serve this with does not send restrictive framing
+  headers (X-Frame-Options / Content-Security-Policy frame-ancestors) - a
+  plain static file server has none by default.
+
+  This file is otherwise identical to iframe-local.html (same probe logic).
+  All results are rendered ONLY in this frame's own table below - none of the
+  probe data is sent to window.parent. The only thing posted to the parent is
+  this frame's rendered height (a single number), so the embedding page can
+  size its <iframe> box to fit without showing a scrollbar. postMessage works
+  transparently across process boundaries, so this is no different from the
+  local iframe's case despite the cross-site/cross-process hosting.
+  ============================================================================
+-->
+<script>
+  function fgCollectSync() {
+    var out = { capturedAt: new Date().toISOString() };
+
+    try {
+      out.fireglassGetRendererPolicy = (typeof window.fireglassGetRendererPolicy === 'function')
+        ? window.fireglassGetRendererPolicy()
+        : '(window.fireglassGetRendererPolicy is not defined in this context)';
+    } catch (e) {
+      out.fireglassGetRendererPolicy = { error: String(e) };
+    }
+
+    out.userAgent = navigator.userAgent;
+
+    try {
+      out.userAgentData = navigator.userAgentData
+        ? navigator.userAgentData.toJSON()
+        : '(navigator.userAgentData is not supported in this context)';
+    } catch (e) {
+      out.userAgentData = { error: String(e) };
+    }
+
+    // Direct property reads, as opposed to .toJSON() above. Chromium's native
+    // NavigatorUAData.prototype.toJSON reads an internal engine slot rather
+    // than going through these getters, so an override that only patches the
+    // brands/mobile/platform getters (not toJSON) makes this metric diverge
+    // from the one above - see the divergence highlight in fgRenderTable.
+    try {
+      out.userAgentDataDirect = navigator.userAgentData
+        ? {
+            brands: navigator.userAgentData.brands,
+            mobile: navigator.userAgentData.mobile,
+            platform: navigator.userAgentData.platform
+          }
+        : '(navigator.userAgentData is not supported in this context)';
+    } catch (e) {
+      out.userAgentDataDirect = { error: String(e) };
+    }
+
+    try {
+      out.languages = Array.from(navigator.languages || []);
+    } catch (e) {
+      out.languages = { error: String(e) };
+    }
+
+    try {
+      out.intlDateTimeFormatResolvedOptions = new Intl.DateTimeFormat().resolvedOptions();
+    } catch (e) {
+      out.intlDateTimeFormatResolvedOptions = { error: String(e) };
+    }
+
+    return out;
+  }
+
+  // Captured immediately, before anything else in this document runs.
+  window.__fgInitialSnapshot = fgCollectSync();
+</script>
+
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 12px; color: #111; font-size: 13px; }
+  .fg-meta { color: #555; margin-bottom: 8px; }
+  .fg-note { color: #555; font-size: 11px; font-style: italic; }
+  table.fg-probe-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+  table.fg-probe-table th, table.fg-probe-table td { border: 1px solid #ddd; padding: 4px 6px; vertical-align: top; text-align: left; }
+  table.fg-probe-table th { background: #f5f5f5; }
+  table.fg-probe-table td.fg-metric { font-weight: 600; width: 22%; }
+  table.fg-probe-table pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px; }
+  td.fg-green { background: #d9f2d9; }
+  td.fg-red { background: #f8d7d7; }
+  td.fg-uadata-diverges { outline: 3px solid #ff9800; outline-offset: -3px; }
+  .fg-timestamp { color: #777; font-size: 10px; margin: 2px 0; }
+  .fg-copy-btn { margin: 4px 0; padding: 5px 12px; font-size: 12px; cursor: pointer; border: 1px solid #888; border-radius: 4px; background: #f5f5f5; }
+  .fg-copy-btn.fg-copy-error { background: #f8d7d7; border-color: #c66; }
+  textarea.fg-copy-fallback { display: none; width: 100%; height: 130px; font-family: monospace; font-size: 10px; margin-top: 6px; box-sizing: border-box; }
+</style>
+</head>
+<body>
+
+<p class="fg-meta">
+  Frame: <strong>out-of-process iframe (cross-site)</strong> &middot;
+  Origin: <code id="fg-origin"></code> &middot;
+  Is top: <code id="fg-is-top"></code>
+</p>
+<button id="fg-copy-btn" class="fg-copy-btn" type="button">Copy this frame's metrics</button>
+<p class="fg-note">
+  If the button says the copy failed (clipboard access can be blocked by
+  isolation policy), the JSON will appear in a text box below - select it and
+  copy manually.
+</p>
+<textarea id="fg-copy-fallback" class="fg-copy-fallback" readonly></textarea>
+<div id="fg-section"></div>
+<p class="fg-note">
+  navigator.userAgentData's high-entropy values only appear in the Current
+  column - they're async by spec and can't be captured in the Initial script.
+  The "direct property reads" row gets an orange outline whenever it differs
+  from .toJSON()'s value in the same snapshot - Chromium's native toJSON()
+  reads an internal engine slot rather than the JS-visible getters, so an
+  override that patches the getters but not toJSON() leaks a different value
+  to anything calling .toJSON() or JSON.stringify(navigator.userAgentData).
+</p>
+
+<script>
+  document.getElementById('fg-origin').textContent = location.origin;
+  document.getElementById('fg-is-top').textContent = (window === window.top);
+
+  var METRICS = [
+    ['window.fireglassGetRendererPolicy()', 'fireglassGetRendererPolicy'],
+    ['navigator.userAgent', 'userAgent'],
+    ['navigator.userAgentData', 'userAgentData'],
+    ['navigator.userAgentData (direct property reads)', 'userAgentDataDirect'],
+    ['navigator.languages', 'languages'],
+    ['Intl.DateTimeFormat().resolvedOptions()', 'intlDateTimeFormatResolvedOptions']
+  ];
+
+  function fgEscapeHtml(s) {
+    return String(s).replace(/[&<>]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+    });
+  }
+
+  function fgFormatValue(v) {
+    if (v === undefined) return '<em>(not yet received)</em>';
+    return '<pre>' + fgEscapeHtml(JSON.stringify(v, null, 2)) + '</pre>';
+  }
+
+  // navigator.userAgentData's "Current" value carries an extra async
+  // highEntropyValues field that "Initial" can never have (see note above).
+  // Strip it before diffing so that addition alone doesn't spuriously flag
+  // the row as "changed", and before comparing it against the direct-read
+  // metric (which never has that field either).
+  function fgStripHighEntropy(v) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      var copy = Object.assign({}, v);
+      delete copy.highEntropyValues;
+      delete copy.highEntropyValuesError;
+      return copy;
+    }
+    return v;
+  }
+
+  function fgValuesEqual(key, a, b) {
+    var bCompare = (key === 'userAgentData') ? fgStripHighEntropy(b) : b;
+    return JSON.stringify(a) === JSON.stringify(bCompare);
+  }
+
+  // True when navigator.userAgentData's direct property reads (brands/mobile/
+  // platform) disagree with its own .toJSON() output, WITHIN THE SAME
+  // snapshot - a sign that whatever overrides the getters didn't also patch
+  // toJSON(), so .toJSON()/JSON.stringify() leak a different, un-overridden
+  // value. Skips the comparison (no divergence flagged) when either side is
+  // missing or itself a failure - that's already surfaced by fgIsFailureValue.
+  function fgUaDataDivergesFromJson(direct, json) {
+    if (direct === undefined || json === undefined) return false;
+    if (!direct || typeof direct !== 'object' || Array.isArray(direct)) return false;
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return false;
+    if ('error' in direct || 'error' in json) return false;
+    return JSON.stringify(direct) !== JSON.stringify(fgStripHighEntropy(json));
+  }
+
+  // A "failure" is a call that threw (wrapped as {error: ...} by fgCollectSync/
+  // fgCollectFull), returned our "(... is not defined/supported ...)" placeholder,
+  // or - for userAgentData specifically - had its high-entropy fetch fail while the
+  // low-entropy part still succeeded.
+  function fgIsFailureValue(key, value) {
+    if (value === undefined) return false;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if ('error' in value) return true;
+      if (key === 'userAgentData' && 'highEntropyValuesError' in value) return true;
+    }
+    if (typeof value === 'string' && /^\(.*\)$/.test(value)) return true;
+    return false;
+  }
+
+  function fgRenderTable(containerEl, initialSnap, currentSnap) {
+    var capturedAt = (currentSnap && currentSnap.capturedAt) || (initialSnap && initialSnap.capturedAt) || '';
+    var html = '<div class="fg-timestamp">Last update: ' + fgEscapeHtml(capturedAt) + '</div>';
+    html += '<table class="fg-probe-table"><thead><tr>' +
+            '<th>Metric</th><th>Initial (page load)</th><th>Current (live)</th>' +
+            '</tr></thead><tbody>';
+    METRICS.forEach(function (pair) {
+      var label = pair[0], key = pair[1];
+      var a = initialSnap ? initialSnap[key] : undefined;
+      var b = currentSnap ? currentSnap[key] : undefined;
+
+      var initialClasses = [], initialTitleParts = [];
+      if (fgIsFailureValue(key, a)) {
+        initialClasses.push('fg-red');
+        initialTitleParts.push('This call failed or returned an unsupported/undefined result');
+      }
+
+      var currentClasses = [], currentTitleParts = [];
+      if (fgIsFailureValue(key, b)) {
+        currentClasses.push('fg-red');
+        currentTitleParts.push('This call failed or returned an unsupported/undefined result');
+      } else if (a !== undefined && b !== undefined) {
+        var matches = fgValuesEqual(key, a, b);
+        currentClasses.push(matches ? 'fg-green' : 'fg-red');
+        currentTitleParts.push(matches ? 'Matches the initial value' : 'Differs from the initial value');
+      }
+
+      // Distinct, independent signal: does the direct-read value diverge from
+      // .toJSON()'s value in that SAME snapshot? Composes with (doesn't
+      // replace) the classes/tooltip above.
+      if (key === 'userAgentDataDirect') {
+        if (fgUaDataDivergesFromJson(a, initialSnap ? initialSnap.userAgentData : undefined)) {
+          initialClasses.push('fg-uadata-diverges');
+          initialTitleParts.push("Differs from navigator.userAgentData.toJSON()'s value in this same snapshot");
+        }
+        if (fgUaDataDivergesFromJson(b, currentSnap ? currentSnap.userAgentData : undefined)) {
+          currentClasses.push('fg-uadata-diverges');
+          currentTitleParts.push("Differs from navigator.userAgentData.toJSON()'s value in this same snapshot");
+        }
+      }
+
+      var initialClass = initialClasses.join(' ');
+      var initialTitle = initialTitleParts.length ? ' title="' + fgEscapeHtml(initialTitleParts.join(' | ')) + '"' : '';
+      var currentClass = currentClasses.join(' ');
+      var currentTitle = currentTitleParts.length ? ' title="' + fgEscapeHtml(currentTitleParts.join(' | ')) + '"' : '';
+
+      html += '<tr><td class="fg-metric">' + fgEscapeHtml(label) + '</td>' +
+              '<td class="' + initialClass + '"' + initialTitle + '>' + fgFormatValue(a) + '</td>' +
+              '<td class="' + currentClass + '"' + currentTitle + '>' + fgFormatValue(b) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    containerEl.innerHTML = html;
+  }
+
+  async function fgCollectFull() {
+    var snap = fgCollectSync();
+    if (navigator.userAgentData && typeof navigator.userAgentData.getHighEntropyValues === 'function') {
+      try {
+        var hints = ['architecture', 'bitness', 'formFactors', 'fullVersionList', 'model', 'platformVersion', 'uaFullVersion', 'wow64'];
+        var highEntropy = await navigator.userAgentData.getHighEntropyValues(hints);
+        snap.userAgentData = Object.assign({}, snap.userAgentData, { highEntropyValues: highEntropy });
+      } catch (e) {
+        snap.userAgentData = Object.assign({}, snap.userAgentData, { highEntropyValuesError: String(e) });
+      }
+    }
+    return snap;
+  }
+
+  // Copies text to the clipboard so it can be pasted elsewhere (e.g. back
+  // into a chat for analysis). Tries the modern async Clipboard API first;
+  // isolation/permission policy or an insecure context can block that, so it
+  // falls back to the legacy execCommand('copy') technique, and as a last
+  // resort just reveals the text in fallbackTextareaEl for a manual copy.
+  async function fgCopyToClipboard(text, buttonEl, fallbackTextareaEl) {
+    var originalLabel = buttonEl.textContent;
+    function showFeedback(label, isError) {
+      buttonEl.textContent = label;
+      buttonEl.classList.toggle('fg-copy-error', !!isError);
+      setTimeout(function () {
+        buttonEl.textContent = originalLabel;
+        buttonEl.classList.remove('fg-copy-error');
+      }, 2000);
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        showFeedback('Copied!');
+        return;
+      } catch (e) {
+        // Fall through to the legacy fallback below.
+      }
+    }
+
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) {
+        showFeedback('Copied!');
+        return;
+      }
+    } catch (e) {
+      // Fall through to the manual fallback below.
+    }
+
+    if (fallbackTextareaEl) {
+      fallbackTextareaEl.value = text;
+      fallbackTextareaEl.style.display = 'block';
+      fallbackTextareaEl.select();
+    }
+    showFeedback('Copy failed - select the text below', true);
+  }
+
+  var state = { initial: window.__fgInitialSnapshot, current: null };
+  var sectionEl = document.getElementById('fg-section');
+
+  // Reports only this frame's rendered height to the parent - NOT the probe
+  // data above, which stays local to this frame's own table. The +2px is a
+  // small buffer against sub-pixel rounding causing a 1px scrollbar to appear.
+  function fgReportHeightToParent() {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ source: 'fg-probe-resize', height: document.documentElement.scrollHeight + 2 }, '*');
+    }
+  }
+
+  async function fgUpdate() {
+    state.current = await fgCollectFull();
+    fgRenderTable(sectionEl, state.initial, state.current);
+    fgReportHeightToParent();
+  }
+  fgUpdate();
+  setInterval(fgUpdate, 1000);
+
+  var copyBtn = document.getElementById('fg-copy-btn');
+  var copyFallback = document.getElementById('fg-copy-fallback');
+  copyBtn.addEventListener('click', function () {
+    var payload = {
+      frame: 'out-of-process iframe (cross-site)',
+      href: location.href,
+      copiedAt: new Date().toISOString(),
+      initial: state.initial,
+      current: state.current
+    };
+    fgCopyToClipboard(JSON.stringify(payload, null, 2), copyBtn, copyFallback);
+  });
+</script>
+
+</body>
+</html>
