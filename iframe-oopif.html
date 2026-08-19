@@ -342,11 +342,22 @@
   var sectionEl = document.getElementById('fg-section');
 
   // Reports only this frame's rendered height to the parent - NOT the probe
-  // data above, which stays local to this frame's own table. The +2px is a
-  // small buffer against sub-pixel rounding causing a 1px scrollbar to appear.
+  // data above, which stays local to this frame's own table.
+  //
+  // Deliberately measures document.body.scrollHeight, NOT
+  // document.documentElement.scrollHeight. The root <html> element's
+  // scrollHeight is clamped to at least the current viewport height, so when
+  // content is shorter than the iframe's current size it reports back the
+  // iframe's OWN height instead of the content's true height - feeding a
+  // resize message built from that straight back into a taller iframe height,
+  // which the next cycle reads back as an even taller "content" height, and
+  // so on forever. document.body is an ordinary block element and isn't
+  // clamped to the viewport, so it reflects actual content height regardless
+  // of the iframe's current size, which breaks that loop. The +2px is just a
+  // one-time buffer against sub-pixel rounding causing a 1px scrollbar.
   function fgReportHeightToParent() {
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ source: 'fg-probe-resize', height: document.documentElement.scrollHeight + 2 }, '*');
+      window.parent.postMessage({ source: 'fg-probe-resize', height: document.body.scrollHeight + 2 }, '*');
     }
   }
 
